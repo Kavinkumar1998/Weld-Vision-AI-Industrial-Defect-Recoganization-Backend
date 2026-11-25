@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 from fastapi.testclient import TestClient
 from backend.main import app
+from backend.model import YOLOModel
 
 client = TestClient(app)
 
@@ -13,6 +14,15 @@ def create_synthetic_image_bytes():
     success, buf = cv2.imencode(".jpg", img)
     assert success
     return io.BytesIO(buf.tobytes())
+
+def test_history_thumbnail_dimensions_are_bounded():
+    image = np.zeros((1200, 1600, 3), dtype=np.uint8)
+
+    thumbnail = YOLOModel.encode_thumbnail(image)
+    decoded = YOLOModel.decode_base64(thumbnail)
+
+    assert decoded is not None
+    assert max(decoded.shape[:2]) <= 320
 
 def test_detect_image_endpoint():
     img_bytes = create_synthetic_image_bytes()

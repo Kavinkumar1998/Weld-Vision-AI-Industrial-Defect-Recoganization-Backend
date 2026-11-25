@@ -187,6 +187,19 @@ class YOLOModel:
         return f"data:image/jpeg;base64,{b64}"
 
     @staticmethod
+    def encode_thumbnail(image: np.ndarray, max_dimension: int = 320, quality: int = 60) -> str:
+        """Encode a bounded-size JPEG thumbnail for the in-memory inspection history."""
+        height, width = image.shape[:2]
+        scale = min(1.0, max_dimension / max(height, width))
+        if scale < 1.0:
+            image = cv2.resize(
+                image,
+                (max(1, round(width * scale)), max(1, round(height * scale))),
+                interpolation=cv2.INTER_AREA
+            )
+        return YOLOModel.encode_base64(image, quality=quality)
+
+    @staticmethod
     def annotate(image: np.ndarray, detections: List[DetectedDefectSchema], verdict: WeldVerdictEnum) -> np.ndarray:
         """Draw bounding boxes and status banner onto an image copy."""
         annotated = image.copy()

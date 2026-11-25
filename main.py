@@ -38,6 +38,17 @@ except ImportError:
 
 START_TIME = time.time()
 INSPECTION_HISTORY: Deque[dict] = deque(maxlen=100)
+INFERENCE_SEMAPHORE = asyncio.Semaphore(1)
+
+
+async def run_inference(image, confidence: float, iou_threshold: float):
+    async with INFERENCE_SEMAPHORE:
+        return await asyncio.to_thread(
+            model.predict,
+            image=image,
+            conf_threshold=confidence,
+            iou_threshold=iou_threshold
+        )
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -126,23 +137,22 @@ async def detect_image(
 
     # 3. Offload YOLO prediction to thread pool (Async unblocked)
     try:
-        verdict, verdict_conf, detections, latency_ms = await asyncio.to_thread(
-            model.predict,
-            image=image,
-            conf_threshold=confidence,
-            iou_threshold=iou_threshold
+        verdict, verdict_conf, detections, latency_ms = await run_inference(
+            image, confidence, iou_threshold
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Inference failure: {str(e)}")
 
     # 4. Optional in-memory annotation
     annotated_b64: Optional[str] = None
+    thumbnail_b64: Optional[str] = None
     if return_annotated_image:
         try:
             annotated_img = model.annotate(image, detections, verdict)
             annotated_b64 = model.encode_base64(annotated_img)
+            thumbnail_b64 = model.encode_thumbnail(annotated_img)
         except Exception as e:
-            pass
+            print(f"Warning: Image annotation failed: {e}")
 
     defect_count = sum(1 for d in detections if d.is_defective)
     good_weld_count = sum(1 for d in detections if not d.is_defective)
@@ -173,7 +183,7 @@ async def detect_image(
         "defect_count": response.defect_count,
         "good_weld_count": response.good_weld_count,
         "latency_ms": response.processing_time_ms,
-        "thumbnail_b64": annotated_b64
+        "thumbnail_b64": thumbnail_b64
     })
 
     return response
@@ -232,11 +242,8 @@ async def websocket_detect_stream(websocket: WebSocket):
                     continue
 
                 # Run inference asynchronously
-                verdict, verdict_conf, detections, latency_ms = await asyncio.to_thread(
-                    model.predict,
-                    image=image,
-                    conf_threshold=confidence,
-                    iou_threshold=iou_threshold
+                verdict, verdict_conf, detections, latency_ms = await run_inference(
+                    image, confidence, iou_threshold
                 )
 
                 now = time.perf_counter()
